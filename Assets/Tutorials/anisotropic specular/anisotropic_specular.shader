@@ -105,16 +105,7 @@ Shader "UnityShaderTutorial/A" {
 			#ifdef UNITY_LIGHT_FUNCTION_APPLY_INDIRECT
 				c.rgb += s.Albedo * gi.indirect.diffuse;
 			#endif
-
-
 				return c;
-			}
-
-			void LightingToonyColorsCustom_GI(inout SurfaceOutputCustom s, UnityGIInput data, inout UnityGI gi) {
-				gi = UnityGlobalIllumination(data, 1.0, IN_NORMAL);
-
-				s.atten = data.atten;	//transfer attenuation to lighting function
-				gi.light.color = _LightColor0.rgb;	//remove attenuation
 			}
 
             v2f vert (float4 vertex : POSITION, float3 normal : NORMAL, float4 tangent : TANGENT, float2 uv : TEXCOORD0)
@@ -133,17 +124,6 @@ Shader "UnityShaderTutorial/A" {
                 o.worldNormal = wNormal;
                 o.tangentDir = tangent.xyz;
 
-                #if UNITY_SHOULD_SAMPLE_SH && !UNITY_SAMPLE_FULL_SH_PER_PIXEL
-			      o.sh = 0;
-			      // Approximated illumination from non-important point lights
-			      #ifdef VERTEXLIGHT_ON
-			        o.sh += Shade4PointLights (
-			          unity_4LightPosX0, unity_4LightPosY0, unity_4LightPosZ0,
-			          unity_LightColor[0].rgb, unity_LightColor[1].rgb, unity_LightColor[2].rgb, unity_LightColor[3].rgb,
-			          unity_4LightAtten0, worldPos, worldNormal);
-			      #endif
-			      o.sh = ShadeSHPerVertex (worldNormal, o.sh);
-			    #endif
                 return o;
             }
 
@@ -177,41 +157,6 @@ Shader "UnityShaderTutorial/A" {
 			  	gi.indirect.specular = 0;
 			  	gi.light.color = _LightColor0.rgb;
 			  	gi.light.dir = lightDir;
-
-			  	// Call GI (lightmaps/SH/reflections) lighting function
-
-			  	// compute lighting & shadowing factor
-  				UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos)
-
-				  UnityGIInput giInput;
-				  UNITY_INITIALIZE_OUTPUT(UnityGIInput, giInput);
-				  giInput.light = gi.light;
-				  giInput.worldPos = i.worldPos;
-				  giInput.worldViewDir = worldViewDir;
-				  giInput.atten = atten;
-				  #if defined(LIGHTMAP_ON) || defined(DYNAMICLIGHTMAP_ON)
-				    giInput.lightmapUV = IN.lmap;
-				  #else
-				    giInput.lightmapUV = 0.0;
-				  #endif
-				  #if UNITY_SHOULD_SAMPLE_SH && !UNITY_SAMPLE_FULL_SH_PER_PIXEL
-				    giInput.ambient = IN.sh;
-				  #else
-				    giInput.ambient.rgb = 0.0;
-				  #endif
-				  giInput.probeHDR[0] = unity_SpecCube0_HDR;
-				  giInput.probeHDR[1] = unity_SpecCube1_HDR;
-				  #if defined(UNITY_SPECCUBE_BLENDING) || defined(UNITY_SPECCUBE_BOX_PROJECTION)
-				    giInput.boxMin[0] = unity_SpecCube0_BoxMin; // .w holds lerp value for blending
-				  #endif
-				  #ifdef UNITY_SPECCUBE_BOX_PROJECTION
-				    giInput.boxMax[0] = unity_SpecCube0_BoxMax;
-				    giInput.probePosition[0] = unity_SpecCube0_ProbePosition;
-				    giInput.boxMax[1] = unity_SpecCube1_BoxMax;
-				    giInput.boxMin[1] = unity_SpecCube1_BoxMin;
-				    giInput.probePosition[1] = unity_SpecCube1_ProbePosition;
-				  #endif
-				  LightingToonyColorsCustom_GI(o, giInput, gi);
 
 			  	fixed4 c = 0;
 
