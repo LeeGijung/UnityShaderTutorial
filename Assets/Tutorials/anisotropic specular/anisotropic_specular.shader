@@ -1,8 +1,11 @@
 ﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
 // Upgrade NOTE: replaced 'mul(UNITY_MATRIX_MVP,*)' with 'UnityObjectToClipPos(*)'
 
-Shader "UnityShaderTutorial/anisotropic_specular" {
+Shader "UnityShaderTutorial/A" {
 	Properties {
+		_MainTex ("Main Texture", 2D) = "white" {}
+		_Color ("Color", Color) = (1,1,1,1)
+
 		//SPECULAR
 		_SpecColor ("Specular Color", Color) = (0.5, 0.5, 0.5, 1)
 		_Smoothness ("Smoothness", Float) = 0.2
@@ -11,13 +14,20 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
 
     SubShader
     {
+    	Tags { "RenderType"="Opaque" }
+
         Pass
         {
+        	Name "FORWARD"
+			Tags { "LightMode" = "ForwardBase" }
+
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #include "UnityCG.cginc"
+            #pragma multi_compile_instancing
+			#include "UnityCG.cginc"
 			#include "Lighting.cginc"
+			#include "AutoLight.cginc"
 
             // exactly the same as in previous shader
             struct v2f {
@@ -27,11 +37,13 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
                 half3 tspace2 : TEXCOORD3;
                 float2 uv : TEXCOORD4;
                 float3 worldNormal : TEXCOORD5;
+                float3 tangentDir : TEXCOORD6;
                 float4 pos : SV_POSITION;
             };
 
             //Custom SurfaceOutput
 			struct SurfaceOutputCustom {
+				half atten;
 				fixed3 Albedo;
 				fixed3 Normal;
 				fixed3 Emission;
@@ -48,7 +60,10 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
             fixed4 _HColor;
             fixed4 _SColor;
 
-            inline half4 LightingToonyColorsCustom (inout SurfaceOutputCustom s, half3 viewDir, UnityGI gi) {
+            sampler2D _MainTex;
+            fixed4 _Color;
+
+            inline half4 LightingCustom (inout SurfaceOutputCustom s, half3 viewDir, UnityGI gi) {
 			#define IN_NORMAL s.Normal
 		
 				half3 lightDir = gi.light.dir;
@@ -95,6 +110,13 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
 				return c;
 			}
 
+			void LightingToonyColorsCustom_GI(inout SurfaceOutputCustom s, UnityGIInput data, inout UnityGI gi) {
+				gi = UnityGlobalIllumination(data, 1.0, IN_NORMAL);
+
+				s.atten = data.atten;	//transfer attenuation to lighting function
+				gi.light.color = _LightColor0.rgb;	//remove attenuation
+			}
+
             v2f vert (float4 vertex : POSITION, float3 normal : NORMAL, float4 tangent : TANGENT, float2 uv : TEXCOORD0)
             {
                 v2f o;
@@ -109,6 +131,19 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
                 o.tspace2 = half3(wTangent.z, wBitangent.z, wNormal.z);
                 o.uv = uv;
                 o.worldNormal = wNormal;
+                o.tangentDir = tangent.xyz;
+
+                #if UNITY_SHOULD_SAMPLE_SH && !UNITY_SAMPLE_FULL_SH_PER_PIXEL
+			      o.sh = 0;
+			      // Approximated illumination from non-important point lights
+			      #ifdef VERTEXLIGHT_ON
+			        o.sh += Shade4PointLights (
+			          unity_4LightPosX0, unity_4LightPosY0, unity_4LightPosZ0,
+			          unity_LightColor[0].rgb, unity_LightColor[1].rgb, unity_LightColor[2].rgb, unity_LightColor[3].rgb,
+			          unity_4LightAtten0, worldPos, worldNormal);
+			      #endif
+			      o.sh = ShadeSHPerVertex (worldNormal, o.sh);
+			    #endif
                 return o;
             }
 
@@ -117,30 +152,43 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
             	fixed3 lightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
             	float3 worldViewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
 
-        		  SurfaceOutputCustom o = (SurfaceOutputCustom)0;
-				  o.Albedo = 0.0;
-				  o.Emission = 0.0;
-				  o.Specular = 0.0;
-				  o.Alpha = 0.0;
-				  fixed3 normalWorldVertex = fixed3(0,0,1);
-				  o.Normal = i.worldNormal;
-				  normalWorldVertex = i.worldNormal;
+	  			SurfaceOutputCustom o = (SurfaceOutputCustom)0;
+			  	o.Emission = 0.0;
+			  	o.Normal = i.worldNormal;
 
-                // Setup lighting environment
-				  UnityGI gi;
-				  UNITY_INITIALIZE_OUTPUT(UnityGI, gi);
-				  gi.indirect.diffuse = 0;
-				  gi.indirect.specular = 0;
-				  gi.light.color = _LightColor0.rgb;
-				  gi.light.dir = lightDir;
+			  	// Texture
+			  	half2 uv_MainTex;
+				uv_MainTex.x = 1.0;
+				uv_MainTex = i.uv;
 
-				  // Call GI (lightmaps/SH/reflections) lighting function
+				fixed4 mainTex = tex2D(_MainTex, uv_MainTex);
+				o.Albedo = mainTex.rgb * _Color.rgb;
+				o.Alpha = mainTex.a * _Color.a;
+
+				// Specular
+				o.Gloss = 1;
+				o.Specular = _Smoothness;
+				o.Tangent = i.tangentDir;
+
+		        // Setup lighting environment
+			  	UnityGI gi;
+			  	UNITY_INITIALIZE_OUTPUT(UnityGI, gi);
+			  	gi.indirect.diffuse = 0;
+			  	gi.indirect.specular = 0;
+			  	gi.light.color = _LightColor0.rgb;
+			  	gi.light.dir = lightDir;
+
+			  	// Call GI (lightmaps/SH/reflections) lighting function
+
+			  	// compute lighting & shadowing factor
+  				UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos)
+
 				  UnityGIInput giInput;
 				  UNITY_INITIALIZE_OUTPUT(UnityGIInput, giInput);
 				  giInput.light = gi.light;
 				  giInput.worldPos = i.worldPos;
 				  giInput.worldViewDir = worldViewDir;
-
+				  giInput.atten = atten;
 				  #if defined(LIGHTMAP_ON) || defined(DYNAMICLIGHTMAP_ON)
 				    giInput.lightmapUV = IN.lmap;
 				  #else
@@ -163,15 +211,13 @@ Shader "UnityShaderTutorial/anisotropic_specular" {
 				    giInput.boxMin[1] = unity_SpecCube1_BoxMin;
 				    giInput.probePosition[1] = unity_SpecCube1_ProbePosition;
 				  #endif
-				  //LightingToonyColorsCustom_GI(o, giInput, gi);
+				  LightingToonyColorsCustom_GI(o, giInput, gi);
 
-				  fixed4 c = 0;
+			  	fixed4 c = 0;
 
-				  //realtime lighting: call lighting function
-				  c += LightingToonyColorsCustom (o, worldViewDir, gi);
-				  UNITY_APPLY_FOG(IN.fogCoord, c); // apply fog
-				  UNITY_OPAQUE_ALPHA(c.a);
-				  return c;
+			  	c += LightingCustom (o, worldViewDir, gi);
+			  	UNITY_OPAQUE_ALPHA(c.a);
+			  	return c;
             }
             ENDCG
         }
